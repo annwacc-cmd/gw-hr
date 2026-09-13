@@ -473,10 +473,14 @@
         </div>
 
         <!-- 底部系統設定與安全 (獨立區塊，永遠固定在最底部不會被遮擋) -->
-                <div class="p-3 border-t border-slate-300/50 bg-[#f4f4f4] relative z-10 text-center flex-shrink-0">
-            <div id="current-user-display" class="text-[10px] text-slate-500 font-medium truncate mb-1">未登入</div>
-            <div class="text-[9px] text-slate-400">Firebase 雲端同步已啟動</div>
-        </div>
+               <div class="p-3 border-t border-slate-300/50 bg-[#f4f4f4] relative z-10 text-center flex-shrink-0">
+    <div class="flex items-center justify-center gap-1.5 mb-1">
+        <span id="fb-sync-dot" title="未連線"
+              style="width:8px;height:8px;border-radius:50%;background:#94a3b8;display:inline-block;flex-shrink:0;transition:background 0.6s;"></span>
+        <div id="current-user-display" class="text-[10px] text-slate-500 font-medium truncate">未登入</div>
+    </div>
+    <div class="text-[9px] text-slate-400">Firebase 雲端同步</div>
+</div>
     </div>
     <!-- ====== 左側欄結束 ====== -->
 
@@ -5533,15 +5537,20 @@ function _applyFbData(d) {
     if (changed && isUnlocked) { renderAll(); updateCompanyDisplays(); }
 }
 
+// ── Firebase 初始拉取（不含監聽，監聽等登入後再啟動）──
+let _fbListenerUnsub = null;
+
 (async function initFirebaseSync() {
     if (!window._fbReady) {
         await new Promise(r => document.addEventListener('firebase-ready', r, { once: true }));
     }
-    const fbData = await window._fbGetAll();
-    if (Object.keys(fbData).length > 0) _applyFbData(fbData);
-    window._fbListen(_applyFbData);
+    try {
+        const fbData = await window._fbGetAll();
+        if (Object.keys(fbData).length > 0) _applyFbData(fbData);
+    } catch(e) {}
 })();
-// ── Firebase Auth 狀態監聽（自動恢復登入，刷新頁面不需重新輸入）──
+
+// ── Firebase Auth 狀態監聽 ──
 let _fbAuthFirstLoad = true;
 (async function initAuthListener() {
     if (!window._fbReady) {
@@ -5553,6 +5562,8 @@ let _fbAuthFirstLoad = true;
         const emailEl   = document.getElementById('login-email-input');
         const pwdEl     = document.getElementById('login-pwd-input');
         const userDisp  = document.getElementById('current-user-display');
+        const syncDot   = document.getElementById('fb-sync-dot');
+
         if (user) {
             await hrIdbReadyPromise;
             isUnlocked = true;
@@ -5561,14 +5572,29 @@ let _fbAuthFirstLoad = true;
             if (emailEl)   emailEl.value           = '';
             if (pwdEl)     pwdEl.value             = '';
             if (userDisp)  userDisp.textContent    = '👤 ' + user.email;
-            // 登入後重新讀 Firestore（修正登入前因安全規則被擋的問題）
+            if (syncDot)   { syncDot.style.background = '#22c55e'; syncDot.title = '已連線 Firebase ✓'; }
+
+            // 登入後讀取最新雲端資料
             try {
                 const freshFbData = await window._fbGetAll();
                 if (Object.keys(freshFbData).length > 0) _applyFbData(freshFbData);
-            } catch(e) {}
+            } catch(e) { console.warn('[FB] post-login fetch:', e); }
+
             renderAll();
             updateCompanyDisplays();
-            // 只有第一次登入跳到公司設定，刷新頁面維持當前頁面
+
+            // ✅ 登入後才啟動即時監聽（確保有認證，避免被安全規則擋下）
+            if (!_fbListenerUnsub) {
+                _fbListenerUnsub = window._fbListen(function(data) {
+                    _applyFbData(data);
+                    // 有資料進來時閃爍綠燈
+                    if (syncDot) {
+                        syncDot.style.background = '#86efac';
+                        setTimeout(() => { if(syncDot) syncDot.style.background = '#22c55e'; }, 800);
+                    }
+                });
+            }
+
             if (_fbAuthFirstLoad) {
                 switchTab('company-settings');
                 _fbAuthFirstLoad = false;
@@ -5577,9 +5603,13 @@ let _fbAuthFirstLoad = true;
             isUnlocked = false;
             if (overlay)  overlay.style.display  = 'flex';
             if (userDisp) userDisp.textContent   = '未登入';
+            if (syncDot)  { syncDot.style.background = '#94a3b8'; syncDot.title = '未連線'; }
+            // 登出時停止監聽
+            if (_fbListenerUnsub) { _fbListenerUnsub(); _fbListenerUnsub = null; }
         }
     });
 })();
+
 // ── 全系統備份匯出 ──
 async function exportSystemBackup() {
     try {

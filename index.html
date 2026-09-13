@@ -1380,6 +1380,7 @@
                     <div class="flex gap-3 flex-wrap">
                         <button onclick="exportSystemBackup()" class="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-700 transition">📤 匯出全系統備份 (.json)</button>
                         <button onclick="importSystemBackup()" class="bg-slate-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 transition">📥 從備份檔還原</button>
+<button onclick="pushAllToFirebase()" class="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">☁️ 強制上傳到 Firebase</button>
                     </div>
                     </div> <!-- 關閉備份卡片 -->
                 </div> <!-- 關閉設定卡片區塊 -->
@@ -5644,15 +5645,19 @@ function importSystemBackup() {
             if (!confirm('還原後目前資料將被備份檔覆蓋，此動作無法復原。\n\n備份時間：' + (backup._exportTime || '未知') + '\n\n確定繼續？')) return;
             await idbClear();
             try { localStorage.clear(); } catch(err) {}
-            var saves = [];
+                       var saves = [], fbSaves = [];
             HR_ALL_KEYS.forEach(function(k) {
                 if (backup.data[k] !== undefined) {
                     saves.push(idbSet(k, backup.data[k]));
                     try { localStorage.setItem(k, JSON.stringify(backup.data[k])); } catch(err) {}
+                    if (k !== 'hr_sys_pwd' && typeof window._fbSet === 'function') {
+                        fbSaves.push(window._fbSet(k, backup.data[k]));
+                    }
                 }
             });
             await Promise.all(saves);
-            alert('✅ 還原成功！頁面即將重新載入...');
+            if (fbSaves.length) try { await Promise.all(fbSaves); } catch(e) {}
+            alert('✅ 還原成功！資料已同步到 Firebase，頁面即將重新載入...');
             setTimeout(function() { location.reload(); }, 1000);
         } catch(err) {
             alert('❌ 備份檔解析失敗：' + err.message);
@@ -6861,6 +6866,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (mi) mi.addEventListener('change', renderCalcMessages);
     renderCalcMessages();
 });
+
+// ── 強制將目前所有資料上傳到 Firebase ──
+async function pushAllToFirebase() {
+    if (typeof window._fbSet !== 'function') {
+        alert('⚠️ Firebase 尚未連線，請確認已登入。'); return;
+    }
+    if (!confirm('確定將電腦目前所有資料上傳到 Firebase？\n\n手機重新整理頁面後即可同步顯示相同資料。')) return;
+    const allData = Object.assign({}, hrCurrentDataMap(), {
+        db_dept_allocation:       deptAllocationRatios,
+        db_salary_deduction_items: salaryDeductionItems,
+        db_calc_other_deducts:    calcOtherDeducts,
+        db_wage_arrears_dept:     wageArrearsDept,
+        calc_messages:            calcMessages
+    });
+    let count = 0;
+    for (const [k, v] of Object.entries(allData)) {
+        if (k !== 'hr_sys_pwd' && v !== undefined) {
+            await window._fbSet(k, v); count++;
+        }
+    }
+    alert(`✅ 已上傳 ${count} 筆資料到 Firebase！\n請在手機上重新整理頁面，資料即會同步。`);
+}
 
 </script>
 <!-- ── 手機底部導覽列 ── -->

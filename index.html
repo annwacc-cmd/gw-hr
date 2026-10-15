@@ -1378,7 +1378,17 @@
                     </div>
                     <div id="cs-deduct-items-list" class="space-y-2"></div>
                 </div>
-
+                <!-- 2.5 特休天數設定卡片 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs w-full">
+                    <h3 class="text-base font-bold text-slate-800 mb-5 pb-3 border-b border-slate-100">🌴 特休天數設定</h3>
+                    <p class="text-xs text-slate-500 mb-4">依年資逐級設定特休天數（預設為勞基法規定天數，欄位下方灰字為法定天數）。年資超過 25 年者，一律以「滿 25 年」天數計算。時薪制員工滿一年後，仍使用員工個別自訂天數。</p>
+                    <div id="cs-leave-days-grid" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-4"></div>
+                    <div class="pt-4 border-t border-slate-100">
+                        <button onclick="saveLeaveDaysTable()" class="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 transition">💾 儲存特休天數</button>
+                        <button onclick="resetLeaveDaysTable()" class="ml-2 bg-slate-100 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-200 transition">↩ 還原法定預設</button>
+                        <span id="cs-ld-save-msg" class="ml-3 text-xs text-emerald-600 font-medium hidden">✔ 已儲存！</span>
+                    </div>
+                </div>
                 <!-- 3. 資料備份與還原卡片 -->
                 <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs w-full">
                     <h3 class="text-base font-bold text-slate-800 mb-5 pb-3 border-b border-slate-100">💾 資料備份與還原</h3>
@@ -1510,7 +1520,41 @@ healthAvgDependents: 1};
         const _c = localStorage.getItem('db_company_info');
         if (_c) companyInfo = JSON.parse(_c);
     } catch(e) {}
-
+    // ── 特休天數設定：未滿半年、滿半年、滿1年 ～ 滿25年 ──
+    const LEAVE_MAX_YEAR = 25;
+    const LEAVE_DAYS_DEFAULT = (function () {          // 勞基法預設值
+        const t = { under: 0, half: 3 };
+        for (let y = 1; y <= LEAVE_MAX_YEAR; y++) {
+            t['y' + y] = y === 1 ? 7 : y === 2 ? 10 : y < 5 ? 14 : y < 10 ? 15 : Math.min(15 + (y - 9), 30);
+        }
+        return t;
+    })();
+    function getLeaveDaysTable() {
+        return Object.assign({}, LEAVE_DAYS_DEFAULT, companyInfo.leaveDaysTable || {});
+    }
+    function leaveDaysLevels() {                       // [[欄位key, 顯示名稱], ...]
+        const L = [['under', '未滿半年'], ['half', '滿半年']];
+        for (let y = 1; y <= LEAVE_MAX_YEAR; y++) L.push(['y' + y, `滿 ${y} 年`]);
+        return L;
+    }
+    function renderLeaveDaysSettings() {
+        const grid = document.getElementById('cs-leave-days-grid');
+        if (!grid) return;
+        const levels = leaveDaysLevels();
+        if (!grid.childElementCount) {                 // 只在第一次建立輸入欄位
+            grid.innerHTML = levels.map(([k, label]) => `
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">${label}</label>
+                    <div class="flex items-center gap-1">
+                        <input type="number" id="cs-ld-${k}" min="0" step="0.5" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+                        <span class="text-xs text-slate-400">天</span>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-0.5">法定：${LEAVE_DAYS_DEFAULT[k]}</p>
+                </div>`).join('');
+        }
+        const T = getLeaveDaysTable();
+        levels.forEach(([k]) => { document.getElementById('cs-ld-' + k).value = T[k]; });
+    }
     function updateCompanyDisplays() {
         // 薪資單預覽
         const nameEl = document.getElementById('slip-company-name-display');
@@ -1556,7 +1600,7 @@ if (bossInput) bossInput.value = companyInfo.bossName || '';
             const el = document.getElementById(id);
             if (el) el.value = companyInfo[key] ?? def;
         });
-
+        renderLeaveDaysSettings();   // ← 新增這一行：同步特休天數設定欄位
     }
 
     function handleLogoUpload(input) {
@@ -1590,6 +1634,29 @@ companyInfo.bossName = document.getElementById('cs-company-boss').value.trim();
         const msg = document.getElementById('cs-save-msg');
         msg.classList.remove('hidden');
         setTimeout(() => msg.classList.add('hidden'), 2000);
+    }
+    function saveLeaveDaysTable() {
+        const t = {};
+        leaveDaysLevels().forEach(([k]) => {
+            const v = (document.getElementById('cs-ld-' + k)?.value || '').trim();
+            t[k] = (v === '' || isNaN(Number(v))) ? LEAVE_DAYS_DEFAULT[k] : Math.max(0, Math.round(Number(v) * 2) / 2);
+        });
+        const low = Object.keys(t).filter(k => t[k] < LEAVE_DAYS_DEFAULT[k]);
+        if (low.length && !confirm(`有 ${low.length} 個年資級距的天數低於勞基法規定，確定要儲存嗎？`)) return;
+        companyInfo.leaveDaysTable = t;
+        dbSet('db_company_info', companyInfo);
+        updateCompanyDisplays();
+        renderAll();   // 人事頁、特休總覽、薪資計算立即用新天數重算
+        const msg = document.getElementById('cs-ld-save-msg');
+        if (msg) { msg.classList.remove('hidden'); setTimeout(() => msg.classList.add('hidden'), 2000); }
+    }
+
+    function resetLeaveDaysTable() {
+        if (!confirm('確定將所有年資的特休天數還原為勞基法預設值？')) return;
+        delete companyInfo.leaveDaysTable;
+        dbSet('db_company_info', companyInfo);
+        updateCompanyDisplays();
+        renderAll();
     }
     let sysPassword = 'hr888';
     try { sysPassword = localStorage.getItem('hr_sys_pwd') || 'hr888'; } catch(e) {}
@@ -1865,14 +1932,14 @@ let salaryDeductionItems = getStorage('db_salary_deduction_items', []); // 薪�
         halfYear.setMonth(halfYear.getMonth() + 6);
         const metHalfYear = now >= halfYear;
 
-        if (years < 1 && !metHalfYear) return { text: "未滿半年 (0天)", totalDays: 0, isCustom: false };
-        if (years < 1 &&  metHalfYear) return { text: "滿半年 (3天)", totalDays: 3, isCustom: false };
-        if (years === 1) return { text: "滿1年 (7天)", totalDays: 7, isCustom: false };
-        if (years === 2) return { text: "滿2年 (10天)", totalDays: 10, isCustom: false };
-        if (years >= 3 && years < 5) return { text: `滿${years}年 (14天)`, totalDays: 14, isCustom: false };
-        if (years >= 5 && years < 10) return { text: `滿${years}年 (15天)`, totalDays: 15, isCustom: false };
-        const extra = Math.min(15 + (years - 9), 30);
-        return { text: `滿${years}年 (${extra}天)`, totalDays: extra, isCustom: false };
+          const T = getLeaveDaysTable();
+        if (years < 1) {
+            return metHalfYear
+                ? { text: `滿半年 (${T.half}天)`, totalDays: T.half, isCustom: false }
+                : { text: `未滿半年 (${T.under}天)`, totalDays: T.under, isCustom: false };
+        }
+        const days = T['y' + Math.min(years, LEAVE_MAX_YEAR)];
+        return { text: `滿${years}年 (${days}天)`, totalDays: days, isCustom: false };
     }
 
 function calcResignationTotalUnusedDays(emp, empId, targetMonth) {

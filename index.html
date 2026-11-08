@@ -569,8 +569,7 @@
                             <th class="p-4 text-right text-violet-700">其他加給1</th>
                             <th class="p-4 text-right text-violet-700">其他加給2</th>
                             <th class="p-4 text-right font-bold text-emerald-700 bg-emerald-50">薪資合計</th>
-                            <th class="p-4 text-right">勞保級距</th>
-                            <th class="p-4 text-right">健保級距</th>
+                           
                             <th class="p-4 text-center">健保身份</th>
                             <th class="p-4 text-center">眷屬加保</th>
                             <th class="p-4 text-right">勞退自提率</th>
@@ -603,8 +602,7 @@
                             <th class="p-4 text-right text-violet-700">其他加給1</th>
                             <th class="p-4 text-right text-violet-700">其他加給2</th>
                             <th class="p-4 text-right font-bold text-emerald-700 bg-emerald-50">薪資合計</th>
-                            <th class="p-4 text-right">新勞保級距</th>
-                            <th class="p-4 text-right">新健保級距</th>
+                            
                             <th class="p-4 text-right">新勞退自提率</th>
                             <th class="p-4 text-center sticky-col-right">操作</th>
                         </tr>
@@ -1874,15 +1872,29 @@ let salaryDeductionItems = getStorage('db_salary_deduction_items', []); // 薪�
     }
 
 
+    // ★ 勞健保投保級距：一律依「勞健保各項異動作業」認定（沒有加保紀錄／已退保 → 0 = 未加保）
+    function _getInsuredGrades(empId, month) {
+        month = String(month || '').substring(0, 7);
+        const mains = insuranceChanges.filter(c => c.empId === empId && c.identity !== '眷屬' && c.date && c.date.substring(0, 7) <= month);
+        const newest = mains.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+        if (!newest || (newest.changeType === '退保' && newest.date.substring(0, 7) < month)) return { labor: 0, health: 0 };
+        const eff = mains.filter(c => c.changeType !== '退保').sort((a, b) => b.date.localeCompare(a.date))[0];
+        return eff ? { labor: eff.laborGrade || 0, health: eff.healthGrade || 0 } : { labor: 0, health: 0 };
+    }
+
     function getEffectiveSalary(empId, targetMonth) {
         const startSal = startingSalaries.find(s => s.empId === empId) || { type: "月薪制", base: 0, allowance: 0, meal: 0, laborIns: 0, healthIns: 0, laborPensionRate: 0 };
         const validAdjusts = salaryAdjustments
             .filter(a => a.empId === empId && a.month <= targetMonth)
             .sort((a, b) => b.month.localeCompare(a.month));
-        if (validAdjusts.length > 0) return { type: startSal.type, healthRole: startSal.healthRole || '員工', dependents: startSal.dependents || 0, ...validAdjusts[0] };
-        return startSal;
+        const sal = validAdjusts.length > 0
+            ? { type: startSal.type, healthRole: startSal.healthRole || '員工', dependents: startSal.dependents || 0, ...validAdjusts[0] }
+            : { ...startSal };
+        const g = _getInsuredGrades(empId, targetMonth);
+        sal.laborIns = g.labor;
+        sal.healthIns = g.health;
+        return sal;
     }
-
 // ─────────────────────────────────────────────────────────────────
 // 離職結算：自動合計所有特休週期剩餘天數
 // 邏輯：已完整結束的週期 → 完整法定天數 − 已請 − 已折現
@@ -2673,8 +2685,7 @@ setTimeout(() => {
                 <td class="p-4 text-right text-violet-600">${(s.otherAllow1||0).toLocaleString()}${s.otherAllow1Label ? `<span class='text-xs text-slate-400 ml-1'>(${s.otherAllow1Label})</span>` : ''}</td>
                 <td class="p-4 text-right text-violet-600">${(s.otherAllow2||0).toLocaleString()}${s.otherAllow2Label ? `<span class='text-xs text-slate-400 ml-1'>(${s.otherAllow2Label})</span>` : ''}</td>
                 <td class="p-4 text-right font-bold text-emerald-700 bg-emerald-50/50">${(s.base+(s.jobAllowance||0)+s.allowance+s.meal+(s.otherAllow1||0)+(s.otherAllow2||0)).toLocaleString()}</td>
-                <td class="p-4 text-right text-slate-400">${s.laborIns.toLocaleString()}</td>
-                <td class="p-4 text-right text-slate-400">${s.healthIns.toLocaleString()}</td>
+                
                 <td class="p-4 text-center"><span class="px-2 py-0.5 rounded-full text-xs font-bold ${s.healthRole==='負責人'?'bg-amber-50 text-amber-700 border border-amber-200':'bg-slate-100 text-slate-600'}">${s.healthRole||'員工'}</span></td>
                 <td class="p-4 text-center text-rose-600 font-bold">${s.dependents||0} 人</td>
                 <td class="p-4 text-right font-medium text-fuchsia-700">${s.laborPensionRate || 0}%</td>
@@ -2797,7 +2808,7 @@ setTimeout(() => {
                         <div class="w-32"><label class="block text-xs font-medium mb-1 text-violet-700">金額</label><input id="m-ss-other2" type="number" value="${ss.otherAllow2||0}" oninput="autoFillGrades('m-ss')" class="p-2 border w-full rounded-lg"></div>
                     </div>
                 </div>
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-3">
+                <div class="hidden bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-3">
                     <p class="text-xs font-bold text-blue-800">🔢 投保級距設定</p>
                     <div>
                         <label class="block text-xs font-medium mb-1">勞保投保級距</label>
@@ -2818,11 +2829,6 @@ setTimeout(() => {
         openModal(isEdit ? "編輯到職薪資" : "新增到職薪資", html, () => {
             const newSS = { empId: document.getElementById('m-ss-id').value, type: document.getElementById('m-ss-type').value, base: Number(document.getElementById('m-ss-base').value), jobAllowance: Number(document.getElementById('m-ss-job-allowance').value||0), allowance: Number(document.getElementById('m-ss-allowance').value), meal: Number(document.getElementById('m-ss-meal').value), otherAllow1: Number(document.getElementById('m-ss-other1').value||0), otherAllow1Label: document.getElementById('m-ss-other1-label').value.trim(), otherAllow2: Number(document.getElementById('m-ss-other2').value||0), otherAllow2Label: document.getElementById('m-ss-other2-label').value.trim(), laborIns: Number(document.getElementById('m-ss-labor').value), healthIns: Number(document.getElementById('m-ss-health').value), healthRole: document.getElementById('m-ss-health-role').value, dependents: Number(document.getElementById('m-ss-dependents').value||0), laborPensionRate: Number(document.getElementById('m-ss-pension').value || 0) };
             if (!isEdit && startingSalaries.some(s => s.empId === newSS.empId)) return alert("該同仁已設定過初始薪資！");
-// ✅ 投保級距法定下限（115年 勞保29,500）
-const _LABOR_MIN = 29500;
-if (newSS.laborIns > 0 && newSS.laborIns < _LABOR_MIN) {
-    if (!confirm(`⚠️ 勞保投保級距 $${newSS.laborIns.toLocaleString()} 低於法定最低投保薪資 $${_LABOR_MIN.toLocaleString()} 元，確定繼續儲存？`)) return;
-}
 
             if (isEdit) { const idx = startingSalaries.findIndex(s => s.empId === empId); startingSalaries[idx] = newSS; } else { startingSalaries.push(newSS); }
             saveAll();
@@ -2961,8 +2967,7 @@ if (newSS.laborIns > 0 && newSS.laborIns < _LABOR_MIN) {
                 <td class="p-4 text-right text-violet-600">${(a.otherAllow1||0).toLocaleString()}${a.otherAllow1Label ? `<span class='text-xs text-slate-400 ml-1'>(${a.otherAllow1Label})</span>` : ''}</td>
                 <td class="p-4 text-right text-violet-600">${(a.otherAllow2||0).toLocaleString()}${a.otherAllow2Label ? `<span class='text-xs text-slate-400 ml-1'>(${a.otherAllow2Label})</span>` : ''}</td>
                 <td class="p-4 text-right font-bold text-emerald-700 bg-emerald-50/50">${(a.base+(a.jobAllowance||0)+a.allowance+a.meal+(a.otherAllow1||0)+(a.otherAllow2||0)).toLocaleString()}</td>
-                <td class="p-4 text-right text-slate-400">${a.laborIns.toLocaleString()}</td>
-                <td class="p-4 text-right text-slate-400">${a.healthIns.toLocaleString()}</td>
+                
                 <td class="p-4 text-right font-medium text-fuchsia-700">${a.laborPensionRate || 0}%</td>
                 <td class="p-4 text-center space-x-2 sticky-col-right">
                     <button onclick="openSAModal('${a.id}')" class="text-blue-600 hover:underline text-xs">編輯</button>
@@ -3022,7 +3027,7 @@ if (newSS.laborIns > 0 && newSS.laborIns < _LABOR_MIN) {
                         <div class="w-32"><label class="block text-xs font-medium mb-1 text-violet-700">金額</label><input id="m-sa-other2" type="number" value="${adj.otherAllow2||0}" oninput="autoFillGrades('m-sa')" class="p-2 border w-full rounded-lg"></div>
                     </div>
                 </div>
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-3">
+                <div class="hidden bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-3">
                     <p class="text-xs font-bold text-blue-800">🔢 投保級距設定</p>
                     <div>
                         <label class="block text-xs font-medium mb-1">新勞保級距</label>
@@ -3040,10 +3045,6 @@ if (newSS.laborIns > 0 && newSS.laborIns < _LABOR_MIN) {
         `;
         openModal(isEdit ? "編輯調薪紀錄" : "新增調薪紀錄", html, () => {
             const newAdj = { id: adj.id, empId: document.getElementById('m-sa-empid').value, month: document.getElementById('m-sa-month').value, base: Number(document.getElementById('m-sa-base').value), jobAllowance: Number(document.getElementById('m-sa-job-allowance').value||0), allowance: Number(document.getElementById('m-sa-allowance').value), meal: Number(document.getElementById('m-sa-meal').value), otherAllow1: Number(document.getElementById('m-sa-other1').value||0), otherAllow1Label: document.getElementById('m-sa-other1-label').value.trim(), otherAllow2: Number(document.getElementById('m-sa-other2').value||0), otherAllow2Label: document.getElementById('m-sa-other2-label').value.trim(), laborIns: Number(document.getElementById('m-sa-labor').value), healthIns: Number(document.getElementById('m-sa-health').value), laborPensionRate: Number(document.getElementById('m-sa-pension').value || 0) };
-const _LABOR_MIN2 = 29500;
-if (newAdj.laborIns > 0 && newAdj.laborIns < _LABOR_MIN2) {
-    if (!confirm(`⚠️ 勞保投保級距 $${newAdj.laborIns.toLocaleString()} 低於法定最低 $${_LABOR_MIN2.toLocaleString()} 元，確定繼續儲存？`)) return;
-}
 
             if (isEdit) { const idx = salaryAdjustments.findIndex(a => a.id === id); salaryAdjustments[idx] = newAdj; } else { salaryAdjustments.push(newAdj); }
             saveAll();
@@ -6239,7 +6240,10 @@ function _autoGenerateMonthlyFeeDetails(month) {
             if (idx >= 0) insuranceFeeDetails[idx] = newRec; else insuranceFeeDetails.push(newRec);
         }
     });
-
+    // ✅ 清掉「沒加保／已退保／已離職」者在該月的殘留或繼承來的明細
+    insuranceFeeDetails = insuranceFeeDetails.filter(f =>
+        f.month !== month || computeEmployeeInsuranceFee(f.empId, month) !== null
+    );
     if (wageArrearsManual[prevMonth] !== undefined && wageArrearsManual[month] === undefined) {
         wageArrearsManual[month] = wageArrearsManual[prevMonth];
         dbSet('db_wage_arrears_manual', wageArrearsManual);
